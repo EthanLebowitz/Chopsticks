@@ -1,3 +1,7 @@
+import time
+import sys
+sys.setrecursionlimit(2000)
+
 class Position:# position: [[playerA left hand, playerA right hand], [playerB left hand, playerB right hand], who's turn (0 or 1)]
 	def __init__(self, playerA=None, playerB=None, turn=None, eval=None, depth=None):
 		self.turn = turn
@@ -117,10 +121,15 @@ class Game:
 		
 class Solver:
 		
-	def __init__(self, ruleset, pos):
+	def __init__(self, ruleset="spillover", pos=Position([1,1], [1,1], 0)):
 		self.game = Game(ruleset, pos)
+		self.ruleset = ruleset
+		self.startingPosition = pos
 		#self.positionsEvaluated = set()
 		self.depth = 10
+		self.depthSearched = 0
+		self.linesAnalyzed = 0
+		self.evaluatedPositions = {}
 	
 	def removeIllegalPositions(positions):
 		legalPositions = positions
@@ -147,8 +156,26 @@ class Solver:
 				
 		return legalMoves
 		
-	def evaluateMove(self, pos, move, d): 
+	def updateDepthSearched(self, d):
+		if d > self.depthSearched:
+			self.depthSearched = d
+		
+	def addPositionEvaluation(self, pos, eval):
+		self.linesAnalyzed += 1
+		self.evaluatedPositions[pos.toString()] = eval
+		
+	def evaluateMove(self, pos, move, d, currentLine): 
+		self.updateDepthSearched(d)
 		resultingPosition = self.game.getResultingPosition(pos, move)
+		
+		if resultingPosition.toString() in self.evaluatedPositions:
+			return [move, self.evaluatedPositions[resultingPosition.toString()]]
+		
+		if resultingPosition.toString() in currentLine:
+			#print(True)
+			return [move, 0]
+		else:
+			currentLine.add(resultingPosition.toString())
 		eval = self.game.checkForWin(resultingPosition)
 		if eval == 0:
 			posString = pos.toString()
@@ -157,7 +184,7 @@ class Solver:
 				return [move, 0]
 			else:
 				#self.positionsEvaluated.add(posString)
-				return self.getBestMove(resultingPosition, d+1)
+				return self.getBestMove(resultingPosition, d+1, currentLine.copy())
 		else:
 			return [move, eval]
 		
@@ -171,13 +198,16 @@ class Solver:
 	def getEvalDistance(self, eval, targetEval):
 		return abs(targetEval-eval)
 		
-	def getBestMove(self, pos, d):
+	def getBestMove(self, pos, d, currentLine):
 		legalMoves = self.getAllLegalMoves(pos)
 		bestMove = None
 		bestEval = None
 		targetEval = self.getGoodEval(pos)
+		#print(currentLine)
 		for move in legalMoves:
-			a, eval = self.evaluateMove(pos, move, d)
+			a, eval = self.evaluateMove(pos, move, d, currentLine.copy())
+			resultingPosition = self.game.getResultingPosition(pos, move)
+			self.addPositionEvaluation(resultingPosition, eval)
 			#print(move)
 			#print(resultingPosition)
 			
@@ -188,42 +218,74 @@ class Solver:
 				bestMove = move
 				bestEval = eval
 				
+			#print(eval)
+			#print(self.getEvalDistance(eval, targetEval))# - self.getEvalDistance(bestEval, targetEval))
+			if self.getEvalDistance(eval, targetEval) == 0:
+				break #prune the rest of the branch
+				
 		return [bestMove, bestEval]
 		
+	def convertTimeToReadable(self, sec): # from https://www.journaldev.com/44690/python-convert-time-hours-minutes-seconds
+	   #sec = sec % (24 * 3600)
+	   day = sec // 86400
+	   sec %= 86400
+	   hour = sec // 3600
+	   sec %= 3600
+	   min = sec // 60
+	   sec %= 60
+	   return "%02d:%02d:%02d:%02d" % (day, hour, min, sec) 
 		
-class Engine:
-	
-	def __init__(self, player = 1, startingPosition = Position([1,1], [1,1], 0)):
-		self.player = player
-		self.solver = Solver("spillover", startingPosition)
-		self.currentPosition = startingPosition
-		self.maxDepth = 10
-		
-	def play(self):
-		while self.solver.game.checkForWin(self.currentPosition) == 0:
-			print(self.currentPosition.toString())
-			if self.currentPosition.turn == self.player: #engines turn
+	def play(self, player = 1, startingPosition = Position([1,1], [1,1], 0), depthCap = 10):
+		while self.game.checkForWin(self.game.currentPosition) == 0:
+			print(self.game.currentPosition.toString())
+			if self.game.currentPosition.turn == player: #engines turn
 				move = None
 				eval = None
-				depthSearched = self.maxDepth
-				for depth in range(10):
-					self.solver.depth = depth
-					move, eval = self.solver.getBestMove(self.currentPosition, 0)
+				depthSearched = depthCap
+				startTime = time.time()
+				for depth in range(depthSearched):
+					self.depth = depth
+					move, eval = self.getBestMove(self.game.currentPosition, 0, set())
 					if eval != 0:
 						depthSearched = depth
 						break
 				
 				print(move)
 				print(eval)
-				print("depth searched: "+str(depthSearched))
-				self.currentPosition = self.solver.game.getResultingPosition(self.currentPosition, move)
+				timeElapsed = time.time() - startTime
+				print("depth searched: "+str(depthSearched) + " in " + self.convertTimeToReadable(timeElapsed))
+				self.game.currentPosition = self.game.getResultingPosition(self.game.currentPosition, move)
 			else:
 				rawMove = input("make a move > ")
 				move = rawMove.rstrip()
 				if rawMove != "split":
 					move = rawMove.replace(" ","").split(",")
 					move = [int(move[0]), int(move[1])]
-				self.currentPosition = self.solver.game.getResultingPosition(self.currentPosition, move)
+				self.game.currentPosition = self.game.getResultingPosition(self.game.currentPosition, move)
+		
+	def solve(self, startingPosition = Position([1,1], [1,1], 0)):
+		print(startingPosition.toString())
+		move = None
+		eval = None
+		depth = float('inf')
+		startTime = time.time()
+		self.depth = depth
+		move, eval = self.getBestMove(startingPosition, 0, set())
+		depthSearched = depth
+		
+		print(eval)
+		timeElapsed = time.time() - startTime
+		print("depth searched: "+str(self.depthSearched) + " | positions analyzed: " + str(len(self.evaluatedPositions)) + " | lines analyzed: " + str(self.linesAnalyzed) + " | in " + self.convertTimeToReadable(timeElapsed))
+		return eval
+		
+		
+# class Engine:
+	
+	# def __init__(self, player = 1, startingPosition = Position([1,1], [1,1], 0)):
+		# self.player = player
+		# self.solver = Solver("spillover", startingPosition)
+		# self.game.currentPosition = startingPosition
+		# self.maxDepth = 10
 		
 	
 			
@@ -240,5 +302,6 @@ initialPosition = Position([1,1], [1,1], 0)
 #solver = Solver("spillover", initialPosition)
 #print(solver.evaluatePosition(initialPosition))
 
-engine = Engine(1, initialPosition)
-engine.play()
+engine = Solver("spillover")
+#engine.play(depthCap=13)
+engine.solve(startingPosition=initialPosition)
